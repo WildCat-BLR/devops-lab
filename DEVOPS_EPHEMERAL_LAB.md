@@ -157,7 +157,7 @@ devops-performance-lab/
 Текущий CI объединён в один workflow с независимыми параллельными jobs:
 
 - `dockerfile-lint` — Hadolint.
-- `build-and-check` — сборка образа и HTTP smoke test с проверкой содержимого страницы.
+- `build-and-check` — сборка образа, проверка непривилегированного UID и HTTP smoke test с проверкой содержимого страницы.
 - `filesystem-scan` — Trivy (HIGH/CRITICAL, без изменения существующей политики сканирования).
 - `dependency-review` — проверка изменений зависимостей только для PR.
 
@@ -227,7 +227,8 @@ devops-performance-lab/
 
 ### Hello World v1
 
-- `nginx:alpine` с минимальной HTML страницей.
+- `nginx/nginx-unprivileged:alpine` с минимальной HTML страницей и явным `USER 101:101` (пользователь `nginx`). Образ настроен для работы без root: PID и временные файлы находятся в `/tmp`.
+- Внутренний порт — `8080`. Локальный запуск: `docker build -t lab1-app:local app`, затем `docker run --rm -p 127.0.0.1:8080:8080 lab1-app:local` из корня репозитория. В будущих Kubernetes manifests `containerPort` и Service `targetPort` должны быть `8080`; внешний порт Service может остаться `80`.
 - Достаточно endpoint `/`; никаких БД и сложного backend.
 - Resources, probes, Deployment, Service типа `ClusterIP`.
 - Используется для изучения Docker, GitHub Actions, Flux, Kubernetes basics.
