@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dockerfile-lint:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check Dockerfile with Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/Dockerfile
+
+  build-and-check:
+    name: Build and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --file app/Dockerfile --tag lab1-app:ci app
+
+      - name: Start container
+        id: start-container
+        run: docker run --detach --name lab1-app-ci --publish 127.0.0.1:8080:80 lab1-app:ci
+
+      - name: Smoke test
+        run: |
+          curl --fail --silent --show-error \
+            --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 \
+            --output "$RUNNER_TEMP/lab1-index.html" http://127.0.0.1:8080/
+          cmp app/index.html "$RUNNER_TEMP/lab1-index.html"
+
+      - name: Show container logs on failure
+        if: failure() && steps.start-container.outcome == 'success'
+        run: docker logs lab1-app-ci
+
+      - name: Remove container
+        if: always() && steps.start-container.outcome == 'success'
+        run: docker rm --force lab1-app-ci
+
+  filesystem-scan:
+    name: Filesystem security scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Scan for vulnerabilities, secrets, and misconfigurations
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

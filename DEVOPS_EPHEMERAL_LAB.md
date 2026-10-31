@@ -152,7 +152,16 @@ devops-performance-lab/
 
 ### 5.2 `ci.yml` — приложение
 
-Триггеры: pull request и push в `main`.
+Триггеры: pull request, push в `main` и ручной `workflow_dispatch`. Push в остальные ветки не запускает CI отдельно от PR.
+
+Текущий CI объединён в один workflow с независимыми параллельными jobs:
+
+- `dockerfile-lint` — Hadolint.
+- `build-and-check` — сборка образа и HTTP smoke test с проверкой содержимого страницы.
+- `filesystem-scan` — Trivy (HIGH/CRITICAL, без изменения существующей политики сканирования).
+- `dependency-review` — проверка изменений зависимостей только для PR.
+
+`concurrency` отменяет устаревшие запуски того же PR или ветки. При настройке branch protection нужно выбирать checks нового workflow вместо удалённых. Публикация в GHCR пока не реализована; дальнейший план:
 
 1. Validate Dockerfile/HTML (по мере необходимости).
 2. Build Docker image.
