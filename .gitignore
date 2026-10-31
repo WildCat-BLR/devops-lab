@@ -1,0 +1,13 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
