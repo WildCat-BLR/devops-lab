@@ -1,0 +1,51 @@
+name: Security CI
+	# Run security checks for pushes to main and for pull requests.
+
+on:
+	push:
+		branches: [main]
+	pull_request:
+	workflow_dispatch:
+		# Also allow maintainers to start this workflow manually.
+
+permissions:
+		# Keep the workflow's default repository access read-only.
+	contents: read
+
+jobs:
+	filesystem-scan:
+		name: Filesystem security scan
+		runs-on: ubuntu-latest
+		steps:
+						# Check out the repository so the scanner can inspect its files.
+			- name: Check out repository
+				uses: actions/checkout@v4
+
+			- name: Scan for vulnerabilities, secrets, and misconfigurations
+				uses: aquasecurity/trivy-action@0.28.0
+				with:
+										# Scan the local filesystem for vulnerabilities, secrets, and misconfigurations.
+					scan-type: fs
+					scan-ref: .
+					scanners: vuln,secret,misconfig
+					severity: HIGH,CRITICAL
+					ignore-unfixed: true
+					exit-code: '1'
+
+	dependency-review:
+		name: Dependency review
+		if: github.event_name == 'pull_request'
+					# Limit this job to the contents permission it needs.
+		runs-on: ubuntu-latest
+		permissions:
+			contents: read
+      pull-requests: read
+		steps:
+			- name: Check out repository
+				uses: actions/checkout@v4
+
+			- name: Review dependency changes
+				uses: actions/dependency-review-action@v4
+				with:
+					fail-on-severity: high
+					# Fail the pull request check for high or critical vulnerabilities in changed dependencies.

@@ -1,0 +1,21 @@
+name: Docker CI
+
+on:
+	push:
+	pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+	build-and-check:
+		runs-on: ubuntu-latest
+		steps:
+			- name: Check out repository
+				uses: actions/checkout@v4
+
+			- name: Build Docker image
+				run: docker build --file app/Dockerfile --tag lab1-app:ci .
+
+			- name: Check built image
+				run: docker image inspect lab1-app:ci
