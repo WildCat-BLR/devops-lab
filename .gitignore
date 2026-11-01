@@ -3,6 +3,10 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+*.tfvars.json
+*.tfplan
+crash.log
+crash.*.log
 
 # Secrets
 .env

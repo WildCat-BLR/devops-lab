@@ -61,6 +61,33 @@ jobs:
         if: always() && steps.start-container.outcome == 'success'
         run: docker rm --force lab1-app-ci
 
+  terraform-check:
+    name: Terraform checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize Terraform without backend
+        run: terraform init -backend=false -input=false -lockfile=readonly
+
+      - name: Validate Terraform
+        run: terraform validate
+
+      - name: Test Terraform with mock provider
+        run: terraform test
+
   filesystem-scan:
     name: Filesystem security scan
     runs-on: ubuntu-latest

@@ -1,7 +1,8 @@
 # Ephemeral DevOps Performance Lab
 
 **Формат:** учебное техническое задание + пошаговый roadmap  
-**Статус:** план реализации (не готовый Terraform/CI/CD проект)  
+**Статус:** CI и минимальный Terraform AKS реализованы; полный lifecycle и GitOps остаются планом
+
 **Основной принцип:** `deploy → verify → experiment → collect → destroy`  
 **Продолжительность одной сессии:** 60–120 минут  
 **Обновлено:** 31 октября 2026
@@ -81,7 +82,7 @@ flowchart TD
 - Среда: **только lab**, без production SLA.
 - Время работы: **обычно 1–2 часа**; вне сессии инфраструктура удалена.
 - Стартовый режим: **AKS + минимально допустимый system node pool**, размер VM от **4 vCPU и 4 GiB RAM на узел**; B-series не подходят для system pool.
-- Для воспроизводимого старта ориентироваться на **2 system node** (требования/допустимость более компактного dev/test варианта обязательно проверить для выбранной конфигурации и региона). Production-рекомендации Microsoft выше.
+- Минимальная реализованная конфигурация: **2 system node** в **East US**, x86_64 `Standard_D4als_v6` (4 vCPU / 8 GiB каждый), AKS Free tier. По текущим требованиям Microsoft system pool содержит минимум два узла; Spot и B-series для него не поддерживаются.
 - Не создавать отдельный user pool, Ingress LoadBalancer, NAT Gateway, Azure Firewall или Application Gateway на первых этапах.
 - **Не открывать Grafana наружу**: пользоваться `kubectl port-forward`.
 - Для тестов HPA сначала масштабировать **Pod'ы**, а не Node.
@@ -89,6 +90,73 @@ flowchart TD
 - Не считать $50 точным верхним пределом: Azure Budget **предупреждает**, но не останавливает биллинг автоматически.
 
 > Примечание о расчёте: два узла на 1–2 часа и небольшие CPU requests обычно позволяют тестировать HPA без production-scale ресурсов. Однако операционные расходы включают VM, диски, сетевые ресурсы и другие услуги. `terraform destroy` должен удалять всё временное, что управляется Terraform; остатки проверяем отдельно.
+
+### 3.1 Реализованный минимальный AKS
+
+Корневая конфигурация `terraform/` создаёт отдельную Resource Group и вызывает модуль `terraform/modules/AKS`, который создаёт один private AKS с SystemAssigned identity. VNet, приватный DNS, node Resource Group и исходящая сеть управляются AKS.
+
+Модуль получает `cluster_name`, `resource_group_name`, `location` и `tags`; provider и Azure authentication остаются в корне. Модуль возвращает `cluster_name`, `cluster_id`, `node_resource_group` и `private_fqdn`, которые корень публикует под прежними именами. Текущие параметры экономичной лаборатории не изменены; будущие компоненты можно подключать отдельными модулями рядом с `module "aks"`.
+
+В корне есть `moved` block для адреса `azurerm_kubernetes_cluster.lab` → `module.aks.azurerm_kubernetes_cluster.lab`. Если старая конфигурация уже применялась, Terraform перенесёт адрес в state, а не будет пересоздавать кластер только из-за выделения модуля.
+
+- Kubernetes API приватный, публичный FQDN отключён, публичных IP у узлов нет.
+- Будущий публичный IP ingress относится к приложению, а не к Kubernetes API.
+- Один system pool используется и для системных Pod, и для приложения. Autoscaler, отдельный user pool и availability zones не настраиваются.
+- OS-диски по 32 GiB: выбранная VM не поддерживает Ephemeral OS. Это маленький диск для короткой лаборатории, не для больших образов или длительной работы.
+- CSI-драйверы и snapshot controller отключены: PVC с Azure Disk/Files не будут автоматически создаваться. Для будущего persistent monitoring драйверы нужно будет включить отдельно.
+- Нет Log Analytics, Container Insights, Defender, NAT Gateway, Firewall, Application Gateway, ACR или ingress-controller. Уже существующие Storage Account и ACR не изменяются.
+- `outbound_type = "loadBalancer"` создаёт стандартный Load Balancer и один публичный исходящий IP для загрузки образов. Private API не означает отсутствие всех публичных IP или сетевых расходов.
+- Версию Kubernetes выбирает AKS из рекомендованных при создании. Обновления могут временно создавать дополнительный узел; нужна дополнительная CPU-квота, и это дополнительные расходы.
+
+**Оценка, а не лимит расходов:** 31.10.2026 Azure Retail Prices API показывает для Linux `Standard_D4als_v6` в East US **$0.161/час за VM**. Два узла — **$0.322/час** или **$235.06 за 730 часов** только compute. Два 32 GiB Premium SSD P4 — ещё около **$10.56/месяц** при непрерывной работе. Итого compute + OS-диски около **$0.3365/час**, **без** Load Balancer, public IP, private networking/DNS, трафика, налогов и существующих ресурсов.
+
+Среди проверенных x64 VM этого размера это немного дешевле `Standard_F4s_v2` с Ephemeral OS ($0.338/час за два узла без OS-дисков). Это не гарантия абсолютного минимума: тарифы, доступность и условия подписки меняются. `Standard_D4als_v6` доступен в East US для проверенной подписки без SKU restrictions; quota и текущую capacity нужно проверять перед apply.
+
+Источники: [system pool requirements](https://learn.microsoft.com/azure/aks/use-system-pools), [AKS Free tier](https://learn.microsoft.com/azure/aks/free-standard-pricing-tiers), [private AKS](https://learn.microsoft.com/azure/aks/private-clusters), [Azure Retail Prices API](https://prices.azure.com/api/retail/prices).
+
+### 3.2 Локальный запуск Terraform
+
+Нужны стабильный Terraform >= 1.7, Azure CLI и права создания Resource Group и AKS. Используется Azure CLI authentication; client secret не нужен. Проверь выбранную подписку через `az account show`.
+
+Resource providers `Microsoft.ContainerService`, `Microsoft.Compute`, `Microsoft.Network` и `Microsoft.Storage` должны быть зарегистрированы заранее. Проверка: `az provider show --namespace Microsoft.ContainerService --query registrationState -o tsv` (повторить для остальных). Если статус не `Registered`, администратор подписки должен зарегистрировать provider. Terraform не регистрирует providers автоматически.
+
+Из корня репозитория, PowerShell:
+
+```powershell
+az login
+$env:TF_VAR_subscription_id = az account show --query id --output tsv
+Set-Location .\terraform
+terraform init
+terraform fmt -check -recursive
+terraform validate
+terraform test
+terraform plan -out=lab.tfplan
+terraform apply lab.tfplan
+```
+
+`terraform test` использует mock provider и проверяет корневые connections/outputs и сам AKS-модуль, не создавая Azure-ресурсы. `apply` начинает биллинг; команда здесь приведена для ручного запуска, автоматически ничего не разворачивается.
+
+После создания для проверки private API без VPN:
+
+```powershell
+$rg = terraform output -raw resource_group_name
+$aks = terraform output -raw cluster_name
+az aks command invoke --resource-group $rg --name $aks --command "kubectl get nodes"
+```
+
+Прямой `kubectl` с ноутбука или GitHub-hosted runner требует доступа к VNet и private DNS через VPN, peering или self-hosted runner. Ingress этого доступа не даёт. `az aks command invoke` выполняет команды через Azure control plane и требует соответствующих Azure RBAC permissions.
+
+После сессии:
+
+```powershell
+$nodeRg = terraform output -raw node_resource_group
+terraform destroy
+az group exists --name $nodeRg
+```
+
+После успешного удаления `az group exists` должен вернуть `false`. Проверь также удаление lab Resource Group и отсутствие оставшихся lab дисков/IP.
+
+**State:** пока используется локальный backend. State и plan могут содержать credentials — они исключены из Git, но их нельзя терять или публиковать. До запуска из GitHub Actions подключить существующий Azure Storage backend вне lab Resource Group; его настройки пока не известны. Не использовать для `resource_group_name` группу, где хранится state. Для максимально низких расходов использовать `destroy`; `az aks stop` не удаляет диски, IP и прочие оплачиваемые ресурсы. Автоматический TTL/watchdog пока не реализован.
 
 ## 4. Репозиторий (целевое состояние)
 
@@ -158,6 +226,7 @@ devops-performance-lab/
 
 - `dockerfile-lint` — Hadolint.
 - `build-and-check` — сборка образа, проверка непривилегированного UID и HTTP smoke test с проверкой содержимого страницы.
+- `terraform-check` — format, init без backend, validate и mock-тесты без Azure credentials и создания ресурсов. Версия provider фиксируется в `terraform/.terraform.lock.hcl`; Dependabot проверяет Terraform dependencies еженедельно.
 - `filesystem-scan` — Trivy (HIGH/CRITICAL, без изменения существующей политики сканирования).
 - `dependency-review` — проверка изменений зависимостей только для PR.
 
