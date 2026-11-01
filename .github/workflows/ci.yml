@@ -61,6 +61,27 @@ jobs:
         if: always() && steps.start-container.outcome == 'success'
         run: docker rm --force lab1-app-ci
 
+      - name: Login to Azure through OIDC
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login Docker to ACR
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Tag and push tested image
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          TAG="sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${TAG}"
+
+          docker tag lab1-app:ci "$IMAGE"
+          docker push "$IMAGE"
+
   filesystem-scan:
     name: Filesystem security scan
     runs-on: ubuntu-latest
