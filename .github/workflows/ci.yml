@@ -36,21 +36,22 @@ jobs:
 
     env: 
       ACR_NAME: ${{ vars.ACR_NAME }}
+      IMAGE_REPOSITORY: devops-lab/lab1
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
       - name: Build Docker image
-        run: docker build --file app/Dockerfile --tag lab1-app:ci app
+        run: docker build --file app/Dockerfile --tag lab1:ci app
 
       - name: Start container
         id: start-container
-        run: docker run --detach --name lab1-app-ci --publish 127.0.0.1:8080:8080 lab1-app:ci
+        run: docker run --detach --name lab1-ci --publish 127.0.0.1:8080:8080 lab1:ci
 
       - name: Verify non-root user
         run: |
-          uid="$(docker exec lab1-app-ci id -u)"
+          uid="$(docker exec lab1-ci id -u)"
           echo "Container UID: $uid"
           test "$uid" -ne 0
 
@@ -63,11 +64,11 @@ jobs:
 
       - name: Show container logs on failure
         if: failure() && steps.start-container.outcome == 'success'
-        run: docker logs lab1-app-ci
+        run: docker logs lab1-ci
 
       - name: Remove container
         if: always() && steps.start-container.outcome == 'success'
-        run: docker rm --force lab1-app-ci
+        run: docker rm --force lab1-ci
 
       - name: Login to Azure through OIDC
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -85,9 +86,9 @@ jobs:
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           TAG="sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${TAG}"
+          IMAGE="${ACR_NAME}.azurecr.io/${IMAGE_REPOSITORY}:${TAG}"
 
-          docker tag lab1-app:ci "$IMAGE"
+          docker tag lab1:ci "$IMAGE"
           docker push "$IMAGE"
 
   filesystem-scan:
