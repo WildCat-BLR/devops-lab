@@ -10,20 +10,22 @@ resource "azurerm_kubernetes_cluster" "lab" {
   private_dns_zone_id                 = "System"
   role_based_access_control_enabled   = true
 
+  default_node_pool {
+    name                         = "system"
+    vm_size                      = "Standard_B2s"
+    node_count                   = 1
+    auto_scaling_enabled         = false
+    only_critical_addons_enabled = false
+    node_public_ip_enabled       = false
+    os_sku                       = "Ubuntu"
+    os_disk_type                 = "Managed"
+    os_disk_size_gb              = 32
+    max_pods                     = 30
+    tags                         = var.tags
+  }
+
   node_provisioning_profile {
-    default_node_pool {
-      name                         = "system"
-      vm_size                      = "Standard_B2s"
-      node_count                   = 1
-      auto_scaling_enabled         = false
-      only_critical_addons_enabled = false
-      node_public_ip_enabled       = false
-      os_sku                       = "Ubuntu"
-      os_disk_type                 = "Managed"
-      os_disk_size_gb              = 32
-      max_pods                     = 30
-      tags                         = var.tags
-    }
+    default_node_pools = "Auto"
   }
 
   api_server_access_profile {
