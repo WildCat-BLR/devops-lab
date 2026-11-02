@@ -7,7 +7,6 @@ resource "azurerm_kubernetes_cluster" "lab" {
 
   private_cluster_enabled             = false
   private_cluster_public_fqdn_enabled = false
-  private_dns_zone_id                 = "System"
   role_based_access_control_enabled   = true
 
   default_node_pool {
