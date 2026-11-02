@@ -17,3 +17,8 @@ output "private_fqdn" {
   description = "Kubernetes API hostname, accessible only through private networking."
   value       = azurerm_kubernetes_cluster.lab.private_fqdn
 }
+
+output "authorized_ip_ranges" {
+  description = "List of authorized IP ranges for the API server."
+  value       = azurerm_kubernetes_cluster.lab.api_server_access_profile[0].authorized_ip_ranges
+}

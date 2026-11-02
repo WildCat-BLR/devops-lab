@@ -18,3 +18,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "authorized_ip_ranges" {
+  description = "List of authorized IP ranges for the API server."
+  type        = list(string)
+  default     = []
+}
