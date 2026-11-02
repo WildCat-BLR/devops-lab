@@ -124,7 +124,7 @@ jobs:
         run: terraform test
 
       - name: Plan Terraform changes
-        run: terraform plan -input=false -lockfile=readonly -no-color
+        run: terraform plan -input=false -no-color
 
   filesystem-scan:
     name: Filesystem security scan
