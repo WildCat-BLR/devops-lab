@@ -182,9 +182,21 @@ az group exists --name $nodeRg
 
 Используются те же OIDC secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` и federated credential для `refs/heads/main`. Subscription передаётся явно через `TF_VAR_subscription_id`. В отличие от plan, identity для apply нужны права создания/изменения/удаления целевых ресурсов и, если конфигурация назначает роли для ACR, право создавать role assignments на соответствующем scope. Доступ к backend state также должен разрешать чтение, запись и locking.
 
-Активный apply не отменяется новым коммитом. У apply своя concurrency group: новый PR plan не вытеснит ожидающий apply. Доступ plan и apply к одному state защищён locking Azure backend; apply ждёт lock до 15 минут. Между сохранением и применением плана lock освобождается, поэтому при стороннем изменении state Terraform отклонит устаревший saved plan. Не отключать locking для обхода такой ошибки.
+Активный apply не отменяется новым коммитом. У apply и ручного destroy общая concurrency group `terraform-lab-apply`: они не выполняются одновременно, а PR plan использует другую группу. Доступ plan и apply к одному state защищён locking Azure backend; apply ждёт lock до 15 минут. Между сохранением и применением плана lock освобождается, поэтому при стороннем изменении state Terraform отклонит устаревший saved plan. Не отключать locking для обхода такой ошибки.
 
 Saved plan хранится только во временном каталоге runner и удаляется шагом cleanup, в artifacts не публикуется. Этот workflow независим от общего CI; для запрета merge непроверенных изменений следует настроить required checks и защиту `main`.
+
+### 3.5 Ручное удаление Terraform-инфраструктуры
+
+`.github/workflows/terraform-destroy.yml` имеет только триггер `workflow_dispatch`: push, PR и расписание удаление не запускают. После добавления workflow в default branch открыть Actions → Terraform Destroy → Run workflow, выбрать `main` и в поле `confirmation` ввести точно `DESTROY`. Из другой ветки job пропускается; неверное подтверждение завершает job ошибкой до обращения к Azure.
+
+Workflow использует те же secrets, OIDC identity для `main` и backend, что и apply. Последовательность: подтверждение → проверка настроек → init с Azure backend → validate → `terraform plan -destroy` с сохранением плана → `terraform apply` именно этого destroy-плана. Форматирование не блокирует удаление; Terraform-конфигурация должна оставаться валидной. После ввода `DESTROY` дополнительного интерактивного подтверждения нет.
+
+Удаляются ресурсы, которыми управляет выбранный state: кластер, lab Resource Group и назначение роли для image pull. В текущей конфигурации постоянный ACR читается через data source, а Storage Account backend не создаётся этими ресурсами — они не являются целями удаления. Они должны находиться вне удаляемой lab Resource Group. Если в state добавлены другие managed resources, destroy удалит и их; перед запуском учитывать весь состав state.
+
+Активные apply и destroy не прерываются друг другом и используют одну concurrency group. GitHub не гарантирует порядок ожидающих запусков; перед ручным удалением проверить очередь apply. Оставшийся или новый apply после destroy может снова создать инфраструктуру. Доступ к state дополнительно защищён backend locking; timeout ожидания — 15 минут. Saved destroy-план удаляется cleanup-шагом и не публикуется в artifacts.
+
+Identity нужны права удаления ресурсов и role assignments, а также чтения/записи state. Workflow не удаляет state blob вручную и не выполняет `force-unlock`. После завершения проверить отсутствие lab Resource Group, node Resource Group и оставшихся оплачиваемых lab-ресурсов.
 
 ## 4. Репозиторий (целевое состояние)
 
