@@ -94,6 +94,11 @@ jobs:
   terraform-check:
     name: Terraform checks
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
     defaults:
       run:
         working-directory: terraform
@@ -117,6 +122,9 @@ jobs:
 
       - name: Test Terraform with mock provider
         run: terraform test
+
+      - name: Plan Terraform changes
+        run: terraform plan -input=false -lockfile=readonly -no-color
 
   filesystem-scan:
     name: Filesystem security scan
