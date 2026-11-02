@@ -22,3 +22,8 @@ output "authorized_ip_ranges" {
   description = "List of authorized IP ranges for the API server."
   value       = azurerm_kubernetes_cluster.lab.api_server_access_profile[0].authorized_ip_ranges
 }
+
+output "kubelet_identity_object_id" {
+  description = "Object ID of the kubelet identity used for image pulls."
+  value       = azurerm_kubernetes_cluster.lab.kubelet_identity[0].object_id
+}

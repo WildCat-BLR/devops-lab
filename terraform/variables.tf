@@ -27,3 +27,15 @@ variable "authorized_ip_ranges" {
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
+
+variable "acr_name" {
+  description = "Name of the Azure Container Registry."
+  type        = string
+  default     = "acrkforgelab01"
+}
+
+variable "acr_resource_group_name" {
+  description = "Resource group name of the Azure Container Registry."
+  type        = string
+  default     = "terraform-sa"
+}

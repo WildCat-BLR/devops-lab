@@ -118,6 +118,8 @@ flowchart TD
 
 Нужны стабильный Terraform >= 1.7, Azure CLI и права создания Resource Group и AKS. Используется Azure CLI authentication; client secret не нужен. Проверь выбранную подписку через `az account show`.
 
+После обновления AzureRM provider из корня репозитория выполняй `terraform -chdir=terraform providers lock -platform=windows_amd64 -platform=linux_amd64` и коммить обновлённый `terraform/.terraform.lock.hcl`. Это фиксирует контрольные суммы для локальной Windows и Linux CI. В CI оставляем `init -lockfile=readonly`, чтобы зависимости не менялись незаметно.
+
 Resource providers `Microsoft.ContainerService`, `Microsoft.Compute`, `Microsoft.Network` и `Microsoft.Storage` должны быть зарегистрированы заранее. Проверка: `az provider show --namespace Microsoft.ContainerService --query registrationState -o tsv` (повторить для остальных). Если статус не `Registered`, администратор подписки должен зарегистрировать provider. Terraform не регистрирует providers автоматически.
 
 Из корня репозитория, PowerShell:
