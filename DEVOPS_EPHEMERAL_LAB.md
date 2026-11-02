@@ -174,6 +174,18 @@ az group exists --name $nodeRg
 
 Запуски этого workflow сериализованы общей concurrency group, plan ждёт state lock до 60 секунд. State или saved plan не загружаются в GitHub artifacts. Workflow не выполняет `apply` и не создаёт кластер; работоспособность Azure-аутентификации можно подтвердить только после настройки secrets, federation и разрешений.
 
+### 3.4 Terraform Apply при изменениях в main
+
+`.github/workflows/terraform-apply.yml` запускается автоматически только на `push` в `main`, если изменились файлы `terraform/**`. Изменения приложения, документации или самого workflow без изменений Terraform не запускают автоматический apply. В остальных случаях доступен Actions → Terraform Apply → Run workflow с выбранной веткой `main`; из других веток job пропускается. Для появления кнопки ручного запуска workflow должен быть добавлен в default branch.
+
+Последовательность: format → `init -lockfile=readonly` с настроенным Azure backend → validate → сохранённый plan → apply именно этого plan. Отдельного подтверждения в workflow нет: push подходящих изменений в `main` разрешает автоматическое применение и может начать биллинг. Plan из PR не применяется напрямую — workflow создаёт новый план для коммита, попавшего в `main`. PR workflow по-прежнему выполняет только plan.
+
+Используются те же OIDC secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` и federated credential для `refs/heads/main`. Subscription передаётся явно через `TF_VAR_subscription_id`. В отличие от plan, identity для apply нужны права создания/изменения/удаления целевых ресурсов и, если конфигурация назначает роли для ACR, право создавать role assignments на соответствующем scope. Доступ к backend state также должен разрешать чтение, запись и locking.
+
+Активный apply не отменяется новым коммитом. У apply своя concurrency group: новый PR plan не вытеснит ожидающий apply. Доступ plan и apply к одному state защищён locking Azure backend; apply ждёт lock до 15 минут. Между сохранением и применением плана lock освобождается, поэтому при стороннем изменении state Terraform отклонит устаревший saved plan. Не отключать locking для обхода такой ошибки.
+
+Saved plan хранится только во временном каталоге runner и удаляется шагом cleanup, в artifacts не публикуется. Этот workflow независим от общего CI; для запрета merge непроверенных изменений следует настроить required checks и защиту `main`.
+
 ## 4. Репозиторий (целевое состояние)
 
 ```text
