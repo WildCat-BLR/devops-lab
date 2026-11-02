@@ -1,0 +1,83 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DESTROY to delete the infrastructure managed by the lab state"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-lab-apply
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    name: Destroy Azure infrastructure
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Confirm infrastructure deletion
+        env:
+          DESTROY_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [[ "$DESTROY_CONFIRMATION" != "DESTROY" ]]; then
+            echo "::error::Type DESTROY exactly to confirm deletion of the infrastructure managed by the lab state."
+            exit 1
+          fi
+
+      - name: Check Azure authentication configuration
+        run: |
+          missing=0
+          for name in ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing $name. Configure AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID repository secrets."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+
+      - name: Initialize Terraform with Azure backend
+        run: terraform init -input=false -lockfile=readonly
+
+      - name: Validate Terraform
+        run: terraform validate
+
+      - name: Save Terraform destroy plan
+        run: terraform plan -destroy -input=false -no-color -lock-timeout=15m -out="$RUNNER_TEMP/terraform-destroy.tfplan"
+
+      - name: Apply saved Terraform destroy plan
+        run: terraform apply -input=false -no-color -lock-timeout=15m "$RUNNER_TEMP/terraform-destroy.tfplan"
+
+      - name: Remove saved destroy plan
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/terraform-destroy.tfplan"

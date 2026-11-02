@@ -1,0 +1,76 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-lab-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply Azure infrastructure
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      id-token: write
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check Azure authentication configuration
+        run: |
+          missing=0
+          for name in ARM_CLIENT_ID ARM_TENANT_ID ARM_SUBSCRIPTION_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing $name. Configure AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID repository secrets."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -diff -recursive
+
+      - name: Initialize Terraform with Azure backend
+        run: terraform init -input=false -lockfile=readonly
+
+      - name: Validate Terraform
+        run: terraform validate
+
+      - name: Save Terraform plan
+        run: terraform plan -input=false -no-color -lock-timeout=15m -out="$RUNNER_TEMP/terraform-apply.tfplan"
+
+      - name: Apply saved Terraform plan
+        run: terraform apply -input=false -no-color -lock-timeout=15m "$RUNNER_TEMP/terraform-apply.tfplan"
+
+      - name: Remove saved plan
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/terraform-apply.tfplan"
