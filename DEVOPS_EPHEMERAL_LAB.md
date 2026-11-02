@@ -158,7 +158,21 @@ az group exists --name $nodeRg
 
 После успешного удаления `az group exists` должен вернуть `false`. Проверь также удаление lab Resource Group и отсутствие оставшихся lab дисков/IP.
 
-**State:** пока используется локальный backend. State и plan могут содержать credentials — они исключены из Git, но их нельзя терять или публиковать. До запуска из GitHub Actions подключить существующий Azure Storage backend вне lab Resource Group; его настройки пока не известны. Не использовать для `resource_group_name` группу, где хранится state. Для максимально низких расходов использовать `destroy`; `az aks stop` не удаляет диски, IP и прочие оплачиваемые ресурсы. Автоматический TTL/watchdog пока не реализован.
+**State:** в `terraform/versions.tf` настроен Azure Storage backend вне lab Resource Group. `init -backend=false` в проверочном CI только пропускает подключение к нему, а не переключает конфигурацию на локальное хранение. State и plan могут содержать credentials — их нельзя публиковать или коммитить. Не использовать для `resource_group_name` группу, где хранится state. Для максимально низких расходов использовать `destroy`; `az aks stop` не удаляет диски, IP и прочие оплачиваемые ресурсы. Автоматический TTL/watchdog пока не реализован.
+
+### 3.3 Отдельный Terraform Plan workflow
+
+`.github/workflows/ci.yml` выполняет Terraform checks без Azure backend: format, `init -backend=false -lockfile=readonly`, validate и `terraform test`. Настоящий plan вынесен в `.github/workflows/terraform-plan.yml` и автоматически запускается при открытии, обновлении и повторном открытии PR из веток этого же репозитория. PR из форков пропускают Azure plan; обычные проверки CI продолжают работать. Для планирования используется `pull_request`, не `pull_request_target`; код внутренних PR должен быть доверенным, поскольку выполняется с Azure-доступом.
+
+Ручной запуск через Actions → Terraform Plan → Run workflow сохранён. Для появления кнопки workflow должен быть добавлен в default branch. Federated credential с subject `repo:<owner>/<repo>:pull_request` используется для PR; для ручного запуска из `main` нужен subject `repo:<owner>/<repo>:ref:refs/heads/main`. Шага apply нет.
+
+Последовательность: проверка Azure-настроек → format → `terraform init` с Azure backend → validate → plan. Workflow получает OIDC token с `id-token: write`, а Terraform использует его напрямую; отдельный `azure/login` и client secret не нужны.
+
+Перед запуском настроить repository secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (те же имена используются в CI публикации image). Пока они не заданы, workflow завершится с явной ошибкой до обращения к Azure. Subscription ID передаётся и в AzureRM provider через `TF_VAR_subscription_id`, чтобы не использовать случайно default из variables.
+
+Существующий `backend "azurerm"` в `terraform/versions.tf` сохранён: Storage Account, container и state key уже заданы. Явные `client_id` и `tenant_id` в backend имеют приоритет над environment variables; если для backend и provider используется одна identity, эти значения должны соответствовать secrets. Identity backend должна иметь federated credential для выбранного репозитория и ветки и доступ к state container (`Storage Blob Data Contributor` для чтения и locking); identity provider — права чтения ресурсов, необходимых для plan. Планирование существующих role assignments также требует права их чтения.
+
+Запуски этого workflow сериализованы общей concurrency group, plan ждёт state lock до 60 секунд. State или saved plan не загружаются в GitHub artifacts. Workflow не выполняет `apply` и не создаёт кластер; работоспособность Azure-аутентификации можно подтвердить только после настройки secrets, federation и разрешений.
 
 ## 4. Репозиторий (целевое состояние)
 

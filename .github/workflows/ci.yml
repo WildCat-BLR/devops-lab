@@ -97,7 +97,6 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
 
     defaults:
       run:
@@ -122,9 +121,6 @@ jobs:
 
       - name: Test Terraform with mock provider
         run: terraform test
-
-      - name: Plan Terraform changes
-        run: terraform plan -input=false -no-color
 
   filesystem-scan:
     name: Filesystem security scan
