@@ -53,9 +53,10 @@ resource "azurerm_kubernetes_flux_configuration" "flux" {
   scope      = "cluster"
 
   git_repository {
-    url             = "https://github.com/WildCat-BLR/devops-lab"
-    reference_type  = "branch"
-    reference_value = "main"
+    url                      = "https://github.com/WildCat-BLR/devops-lab"
+    reference_type           = "branch"
+    reference_value          = "main"
+    sync_interval_in_seconds = 120
   }
 
   kustomizations {
