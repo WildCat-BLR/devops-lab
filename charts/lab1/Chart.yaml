@@ -1,0 +1,8 @@
+apiVersion: v2
+name: lab1
+version: 0.1.0
+description: A Helm chart for lab1 - "Hello World" application
+type: application
+maintainers:
+  - name: WildCat-BLR
+appVersion: "0.1.0"

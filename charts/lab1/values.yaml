@@ -1,0 +1,23 @@
+---
+appname: lab1
+
+image:
+  repository: acrkforgelab01.azurecr.io/devops-lab/lab1
+  tag: latest
+
+targetNamespace: lab-app
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+replicaCount: 1
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
