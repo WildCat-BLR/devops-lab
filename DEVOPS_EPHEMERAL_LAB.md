@@ -160,7 +160,25 @@ az group exists --name $nodeRg
 
 **State:** в `terraform/versions.tf` настроен Azure Storage backend вне lab Resource Group. `init -backend=false` в проверочном CI только пропускает подключение к нему, а не переключает конфигурацию на локальное хранение. State и plan могут содержать credentials — их нельзя публиковать или коммитить. Не использовать для `resource_group_name` группу, где хранится state. Для максимально низких расходов использовать `destroy`; `az aks stop` не удаляет диски, IP и прочие оплачиваемые ресурсы. Автоматический TTL/watchdog пока не реализован.
 
-### 3.3 Отдельный Terraform Plan workflow
+### 3.3 Основной выборочный CI workflow
+
+`.github/workflows/ci.yml` — основной CI для push в `main`, pull request и ручного запуска. Job `detect-changes` использует `dorny/paths-filter`: для PR изменения берутся относительно base PR через GitHub API, а для push сравниваются с SHA до push (`github.event.before`). Полная история checkout нужна для push, в том числе когда push включает несколько коммитов.
+
+| Изменения | Проверки основного CI |
+|---|---|
+| `app/**` | Dockerfile lint, Docker build и smoke test |
+| `charts/**` или `clusters/**` | Helm lint и render |
+| `terraform/**` | Terraform format, validate и tests |
+| `.github/workflows/**` | Все три группы проверок |
+| Только документация или другие неучтённые файлы | Только filesystem security scan и итоговый job |
+
+Filesystem security scan запускается при каждом CI независимо от путей. Итоговый job `CI result` ждёт все проверки: успех затронутой проверки обязателен, ожидаемый `skipped` для незатронутой принимается, а ошибка или отмена проверки не скрываются. Ошибка определения изменений также блокирует успех. Для branch protection используйте `CI result` как единственный обязательный check основного CI вместо отдельных условных jobs.
+
+Ручной `workflow_dispatch` запускает все три группы проверок, но не публикует image и не меняет HelmRelease. Изменение workflow также запускает Docker build/smoke test для проверки затронутого CI, но само по себе не публикует image. Публикация выполняется только для push в `main`, если изменился `app/**`: сначала проходят все проверки, затем отдельный job с `id-token: write` загружает протестированный image artifact и публикует его в ACR. Release job получает непустой уникальный tag через job output и обновляет только `clusters/lab/helm-release.yaml`; используется обычный `git push`, без force push. Автоматический commit меняет только HelmRelease tag: он запустит Helm-проверку и filesystem scan, но не Docker build, публикацию или следующий release.
+
+Terraform Plan, Apply и Destroy остаются отдельными workflows. В частности, `.github/workflows/terraform-plan.yml` по-прежнему запускается на PR согласно собственным условиям, независимо от выборки основного CI.
+
+### 3.4 Отдельный Terraform Plan workflow
 
 `.github/workflows/ci.yml` выполняет Terraform checks без Azure backend: format, `init -backend=false -lockfile=readonly`, validate и `terraform test`. Настоящий plan вынесен в `.github/workflows/terraform-plan.yml` и автоматически запускается при открытии, обновлении и повторном открытии PR из веток этого же репозитория. PR из форков пропускают Azure plan; обычные проверки CI продолжают работать. Для планирования используется `pull_request`, не `pull_request_target`; код внутренних PR должен быть доверенным, поскольку выполняется с Azure-доступом.
 
@@ -174,7 +192,7 @@ az group exists --name $nodeRg
 
 Запуски этого workflow сериализованы общей concurrency group, plan ждёт state lock до 60 секунд. State или saved plan не загружаются в GitHub artifacts. Workflow не выполняет `apply` и не создаёт кластер; работоспособность Azure-аутентификации можно подтвердить только после настройки secrets, federation и разрешений.
 
-### 3.4 Terraform Apply при изменениях в main
+### 3.5 Terraform Apply при изменениях в main
 
 `.github/workflows/terraform-apply.yml` запускается автоматически только на `push` в `main`, если изменились файлы `terraform/**`. Изменения приложения, документации или самого workflow без изменений Terraform не запускают автоматический apply. В остальных случаях доступен Actions → Terraform Apply → Run workflow с выбранной веткой `main`; из других веток job пропускается. Для появления кнопки ручного запуска workflow должен быть добавлен в default branch.
 
@@ -186,7 +204,7 @@ az group exists --name $nodeRg
 
 Saved plan хранится только во временном каталоге runner и удаляется шагом cleanup, в artifacts не публикуется. Этот workflow независим от общего CI; для запрета merge непроверенных изменений следует настроить required checks и защиту `main`.
 
-### 3.5 Ручное удаление Terraform-инфраструктуры
+### 3.6 Ручное удаление Terraform-инфраструктуры
 
 `.github/workflows/terraform-destroy.yml` имеет только триггер `workflow_dispatch`: push, PR и расписание удаление не запускают. После добавления workflow в default branch открыть Actions → Terraform Destroy → Run workflow, выбрать `main` и в поле `confirmation` ввести точно `DESTROY`. Из другой ветки job пропускается; неверное подтверждение завершает job ошибкой до обращения к Azure.
 

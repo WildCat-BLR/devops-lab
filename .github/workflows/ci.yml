@@ -14,8 +14,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      app: ${{ steps.filter.outputs.app == 'true' || github.event_name == 'workflow_dispatch' }}
+      app_checks: ${{ steps.filter.outputs.app_checks == 'true' || github.event_name == 'workflow_dispatch' }}
+      helm: ${{ steps.filter.outputs.helm == 'true' || github.event_name == 'workflow_dispatch' }}
+      terraform: ${{ steps.filter.outputs.terraform == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          base: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' && github.event.before || github.event.repository.default_branch }}
+          filters: |
+            app:
+              - 'app/**'
+            app_checks:
+              - 'app/**'
+              - '.github/workflows/**'
+            helm:
+              - 'charts/**'
+              - 'clusters/**'
+              - '.github/workflows/**'
+            terraform:
+              - 'terraform/**'
+              - '.github/workflows/**'
+
   dockerfile-lint:
     name: Dockerfile lint
+    needs: detect-changes
+    if: needs.detect-changes.outputs.app_checks == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -26,39 +64,11 @@ jobs:
         with:
           dockerfile: app/Dockerfile
 
-  helm-check:
-    name: Helm checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.17.3
-
-      - name: Lint Helm chart
-        run: helm lint --strict charts/lab1
-
-      - name: Render Helm chart
-        run: helm template lab1 charts/lab1 --namespace lab-app
-
   build-and-check:
     name: Build and smoke test
+    needs: detect-changes
+    if: needs.detect-changes.outputs.app_checks == 'true'
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      id-token: write
-
-    env: 
-      ACR_NAME: ${{ vars.ACR_NAME }}
-      IMAGE_REPOSITORY: devops-lab/lab1
-
-    outputs:
-      image-tag: ${{ steps.push-image.outputs.tag }}
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -91,37 +101,46 @@ jobs:
         if: always() && steps.start-container.outcome == 'success'
         run: docker rm --force lab1-ci
 
-      - name: Login to Azure through OIDC
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: azure/login@v3
+      - name: Save tested image for publication
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker save lab1:ci --output "$RUNNER_TEMP/lab1-image.tar"
+
+      - name: Upload tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          name: lab1-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lab1-image.tar
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Login Docker to ACR
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: az acr login --name "$ACR_NAME"
+  helm-check:
+    name: Helm checks
+    needs: detect-changes
+    if: needs.detect-changes.outputs.helm == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
 
-      - name: Tag and push tested image
-        id: push-image
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          TAG="sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          IMAGE="${ACR_NAME}.azurecr.io/${IMAGE_REPOSITORY}:${TAG}"
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
 
-          docker tag lab1:ci "$IMAGE"
-          docker push "$IMAGE"
+      - name: Lint Helm chart
+        run: helm lint --strict charts/lab1
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Render Helm chart
+        run: helm template lab1 charts/lab1 --namespace lab-app
 
   terraform-check:
     name: Terraform checks
+    needs: detect-changes
+    if: needs.detect-changes.outputs.terraform == 'true'
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
-
     defaults:
       run:
         working-directory: terraform
@@ -163,45 +182,159 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
-#  dependency-review:
-#    name: Dependency review
-#    if: github.event_name == 'pull_request'
-#    runs-on: ubuntu-latest
-#    continue-on-error: true
-#    permissions:
-#      contents: read
-#      pull-requests: read
-#    steps:
-#      - name: Check out repository
-#        uses: actions/checkout@v7
-#
-#      - name: Review dependency changes
-#        uses: actions/dependency-review-action@v5
-#        with:
-#          fail-on-severity: high
+  ci-result:
+    name: CI result
+    if: always()
+    needs:
+      - detect-changes
+      - dockerfile-lint
+      - build-and-check
+      - helm-check
+      - terraform-check
+      - filesystem-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required check results
+        env:
+          CHANGES_RESULT: ${{ needs.detect-changes.result }}
+          APP_CHECKS_REQUIRED: ${{ needs.detect-changes.outputs.app_checks }}
+          HELM_REQUIRED: ${{ needs.detect-changes.outputs.helm }}
+          TERRAFORM_REQUIRED: ${{ needs.detect-changes.outputs.terraform }}
+          DOCKERFILE_LINT_RESULT: ${{ needs.dockerfile-lint.result }}
+          BUILD_AND_CHECK_RESULT: ${{ needs.build-and-check.result }}
+          HELM_CHECK_RESULT: ${{ needs.helm-check.result }}
+          TERRAFORM_CHECK_RESULT: ${{ needs.terraform-check.result }}
+          FILESYSTEM_SCAN_RESULT: ${{ needs.filesystem-scan.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "::error::Change detection finished with status: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          verify_check() {
+            local name="$1"
+            local required="$2"
+            local result="$3"
+
+            if [[ "$required" == "true" ]]; then
+              if [[ "$result" != "success" ]]; then
+                echo "::error::$name was required but finished with status: $result"
+                return 1
+              fi
+            elif [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "::error::$name finished with status: $result"
+              return 1
+            elif [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "::error::$name finished with unexpected status: $result"
+              return 1
+            fi
+          }
+
+          verify_check "Dockerfile lint" "$APP_CHECKS_REQUIRED" "$DOCKERFILE_LINT_RESULT"
+          verify_check "Build and smoke test" "$APP_CHECKS_REQUIRED" "$BUILD_AND_CHECK_RESULT"
+          verify_check "Helm checks" "$HELM_REQUIRED" "$HELM_CHECK_RESULT"
+          verify_check "Terraform checks" "$TERRAFORM_REQUIRED" "$TERRAFORM_CHECK_RESULT"
+          verify_check "Filesystem security scan" "true" "$FILESYSTEM_SCAN_RESULT"
+
+  publish-image:
+    name: Publish tested image
+    needs:
+      - detect-changes
+      - build-and-check
+      - ci-result
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.result == 'success' &&
+      needs.detect-changes.outputs.app == 'true' &&
+      needs.build-and-check.result == 'success' &&
+      needs.ci-result.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ACR_NAME: ${{ vars.ACR_NAME }}
+      IMAGE_REPOSITORY: devops-lab/lab1
+    outputs:
+      image-tag: ${{ steps.push-image.outputs.tag }}
+    steps:
+      - name: Download tested image
+        uses: actions/download-artifact@v4
+        with:
+          name: lab1-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+
+      - name: Load tested image
+        run: docker load --input "$RUNNER_TEMP/lab1-image.tar"
+
+      - name: Login to Azure through OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login Docker to ACR
+        run: |
+          if [[ -z "$ACR_NAME" ]]; then
+            echo "::error::Set the ACR_NAME repository variable before publishing images."
+            exit 1
+          fi
+          az acr login --name "$ACR_NAME"
+
+      - name: Tag and push tested image
+        id: push-image
+        run: |
+          TAG="sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ -z "$TAG" ]]; then
+            echo "::error::Refusing to publish an image with an empty tag."
+            exit 1
+          fi
+
+          IMAGE="${ACR_NAME}.azurecr.io/${IMAGE_REPOSITORY}:${TAG}"
+          docker tag lab1:ci "$IMAGE"
+          docker push "$IMAGE"
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
   update-dev-release:
     name: Update DEV image
     needs:
-      - dockerfile-lint
-      - helm-check
-      - build-and-check
-      - terraform-check
-      - filesystem-scan
-
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - detect-changes
+      - ci-result
+      - publish-image
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect-changes.result == 'success' &&
+      needs.detect-changes.outputs.app == 'true' &&
+      needs.ci-result.result == 'success' &&
+      needs.publish-image.result == 'success'
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
-
     steps:
       - name: Check out source revision
         uses: actions/checkout@v7
 
+      - name: Verify published image tag
+        env:
+          IMAGE_TAG: ${{ needs.publish-image.outputs.image-tag }}
+        run: |
+          if [[ -z "$IMAGE_TAG" ]]; then
+            echo "::error::The image publication job did not provide a tag; refusing to update the HelmRelease."
+            exit 1
+          fi
+
       - name: Update HelmRelease image tag
         uses: mikefarah/yq@v4
         env:
-          IMAGE_TAG: ${{ needs.build-and-check.outputs.image-tag }}
+          IMAGE_TAG: ${{ needs.publish-image.outputs.image-tag }}
         with:
           cmd: >-
             yq -i
