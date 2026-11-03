@@ -38,6 +38,9 @@ jobs:
       ACR_NAME: ${{ vars.ACR_NAME }}
       IMAGE_REPOSITORY: devops-lab/lab1
 
+    outputs:
+      image-tag: ${{ steps.push-image.outputs.tag }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -83,6 +86,7 @@ jobs:
         run: az acr login --name "$ACR_NAME"
 
       - name: Tag and push tested image
+        id: push-image
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           TAG="sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -90,6 +94,8 @@ jobs:
 
           docker tag lab1:ci "$IMAGE"
           docker push "$IMAGE"
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   terraform-check:
     name: Terraform checks
@@ -155,3 +161,45 @@ jobs:
 #        uses: actions/dependency-review-action@v5
 #        with:
 #          fail-on-severity: high
+  update-dev-release:
+    name: Update DEV image
+    needs:
+      - dockerfile-lint
+      - build-and-check
+      - terraform-check
+      - filesystem-scan
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source revision
+        uses: actions/checkout@v7
+
+      - name: Update HelmRelease image tag
+        uses: mikefarah/yq@v4
+        env:
+          IMAGE_TAG: ${{ needs.build-and-check.outputs.image-tag }}
+        with:
+          cmd: >-
+            yq -i
+            '.spec.values.image.tag = strenv(IMAGE_TAG)'
+            clusters/lab/helm-release.yaml
+
+      - name: Commit GitOps update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- clusters/lab/helm-release.yaml
+
+          if git diff --cached --quiet; then
+            echo "HelmRelease already contains the requested tag."
+            exit 0
+          fi
+
+          git commit -m "chore(dev): update lab1 image"
+          git push origin HEAD:main

@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.appname }}
+  namespace: {{ .Values.targetNamespace }}
+  labels:
+    app: {{ .Values.appname }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Values.appname }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.appname }}
+    spec:
+      containers:
+        - name: {{ .Values.appname }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
