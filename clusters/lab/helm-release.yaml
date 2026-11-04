@@ -8,7 +8,6 @@ spec:
   dependsOn:
     - name: traefik
       namespace: flux
-
   interval: 1m
   timeout: 5m
   releaseName: lab1
@@ -29,7 +28,7 @@ spec:
   values:
     image:
       repository: acrkforgelab01.azurecr.io/devops-lab/lab1
-      tag: "sha-9dea8f0fd60490b19fce27f92d0d17f42dc9ecf2-41835848179-1"
+      tag: "sha-966bda48e09396eedbd00e1b53a17505e758c2c9-41838092331-1"
     ingress:
       enabled: true
       className: traefik
