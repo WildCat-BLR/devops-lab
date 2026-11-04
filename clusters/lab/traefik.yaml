@@ -55,7 +55,7 @@ spec:
     service:
       type: LoadBalancer
       annotations:
-        service.beta.kubernetes.io/azure-pip-name: pip-lab-ingress
+        service.beta.kubernetes.io/azure-pip-name: "${INGRESS_PUBLIC_IP_NAME}"
 
     ingressRoute:
       dashboard:

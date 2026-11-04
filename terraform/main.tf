@@ -66,6 +66,13 @@ resource "azurerm_kubernetes_flux_configuration" "flux" {
     timeout_in_seconds         = 600
     garbage_collection_enabled = true
     wait                       = true
+
+    post_build {
+      substitute = {
+        INGRESS_PUBLIC_IP_NAME = azurerm_public_ip.ingress.name
+        INGRESS_HOSTNAME       = azurerm_public_ip.ingress.fqdn
+      }
+    }
   }
 
   depends_on = [

@@ -32,4 +32,4 @@ spec:
     ingress:
       enabled: true
       className: traefik
-      host: kforgelab.eastus.cloudapp.azure.com
+      host: "${INGRESS_HOSTNAME}"
