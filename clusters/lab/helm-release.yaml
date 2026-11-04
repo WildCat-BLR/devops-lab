@@ -33,4 +33,4 @@ spec:
     ingress:
       enabled: true
       className: traefik
-      host: kforge-lab-ingress.eastus.cloudapp.azure.com
+      host: kforgelab.eastus.cloudapp.azure.com
