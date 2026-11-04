@@ -71,6 +71,7 @@ resource "azurerm_kubernetes_flux_configuration" "flux" {
       substitute = {
         INGRESS_PUBLIC_IP_NAME = azurerm_public_ip.ingress.name
         INGRESS_HOSTNAME       = azurerm_public_ip.ingress.fqdn
+        ACR_LOGIN_SERVER       = data.azurerm_container_registry.persistent.login_server
       }
     }
   }

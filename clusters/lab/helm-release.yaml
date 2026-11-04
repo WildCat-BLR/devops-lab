@@ -27,7 +27,7 @@ spec:
     mode: enabled
   values:
     image:
-      repository: acrkforgelab01.azurecr.io/devops-lab/lab1
+      repository: "${ACR_LOGIN_SERVER}/devops-lab/lab1"
       tag: "sha-e1b687200d7095eeb8a556f3aba75371593356ac-41842073649-1"
     ingress:
       enabled: true
