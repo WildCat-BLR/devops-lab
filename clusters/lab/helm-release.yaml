@@ -26,3 +26,8 @@ spec:
     image:
       repository: acrkforgelab01.azurecr.io/devops-lab/lab1
       tag: "sha-da9cbac3f45ad53bb7bd99207e3ee44285be106e-41648314146-1"
+
+    ingress:
+      enabled: true
+      className: traefik
+      host: kforge-lab-ingress.eastus.cloudapp.azure.com

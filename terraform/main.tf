@@ -72,3 +72,16 @@ resource "azurerm_kubernetes_flux_configuration" "flux" {
     azurerm_kubernetes_cluster_extension.flux
   ]
 }
+
+resource "azurerm_public_ip" "ingress" {
+  name                = "pip-lab-ingress"
+  location            = azurerm_resource_group.lab.location
+  resource_group_name = module.aks.node_resource_group
+
+  allocation_method = "Static"
+  sku               = "Standard"
+
+  domain_name_label = "kforgelab"
+
+  tags = local.tags
+}
