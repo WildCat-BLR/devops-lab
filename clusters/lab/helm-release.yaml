@@ -25,4 +25,4 @@ spec:
   values:
     image:
       repository: acrkforgelab01.azurecr.io/devops-lab/lab1
-      tag: "sha-da9cbac3f45ad53bb7bd99207e3ee44285be106e-41648314146-1"
+      tag: "sha-da0502f52d54beec2947e44249a568265b569378-41829673657-1"
