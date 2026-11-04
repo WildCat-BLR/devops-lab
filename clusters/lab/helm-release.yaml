@@ -25,8 +25,7 @@ spec:
   values:
     image:
       repository: acrkforgelab01.azurecr.io/devops-lab/lab1
-      tag: "sha-da0502f52d54beec2947e44249a568265b569378-41829673657-1"
-
+      tag: "sha-9dea8f0fd60490b19fce27f92d0d17f42dc9ecf2-41835848179-1"
     ingress:
       enabled: true
       className: traefik
