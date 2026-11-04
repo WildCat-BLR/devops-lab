@@ -7,9 +7,6 @@ metadata:
     app: {{ .Values.appname }}
 spec:
   replicas: {{ .Values.replicaCount }}
-  dependsOn:
-    - name: traefik
-      namespace: flux
   selector:
     matchLabels:
       app: {{ .Values.appname }}

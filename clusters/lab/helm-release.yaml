@@ -5,6 +5,10 @@ metadata:
   name: lab1
   namespace: flux
 spec:
+  dependsOn:
+    - name: traefik
+      namespace: flux
+
   interval: 1m
   timeout: 5m
   releaseName: lab1
