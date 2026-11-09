@@ -42,7 +42,28 @@ jobs:
         run: helm lint --strict charts/lab1
 
       - name: Render Helm chart
-        run: helm template lab1 charts/lab1 --namespace lab-app
+        run: |
+          helm template lab1 charts/lab1 --namespace lab-app
+          helm template lab1 charts/lab1 --namespace lab-app \
+            --set ingress.enabled=true \
+            --set ingress.host=lab.example.com
+          helm template lab1 charts/lab1 --namespace lab-app \
+            --set ingress.enabled=true \
+            --set ingress.host=lab.example.com \
+            --set ingress.clusterIssuer=letsencrypt-production \
+            --set ingress.tls.secretName=lab1-tls
+
+      - name: Reject certificate issuer without TLS Secret
+        run: |
+          if helm template lab1 charts/lab1 --namespace lab-app \
+            --set ingress.enabled=true \
+            --set ingress.host=lab.example.com \
+            --set ingress.clusterIssuer=letsencrypt-production \
+            > /dev/null 2> "$RUNNER_TEMP/helm-missing-tls-secret.log"; then
+            echo "::error::Chart accepted an issuer without ingress.tls.secretName."
+            exit 1
+          fi
+          grep -F "ingress.tls.secretName is required" "$RUNNER_TEMP/helm-missing-tls-secret.log"
 
   build-and-check:
     name: Build and smoke test
