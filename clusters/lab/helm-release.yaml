@@ -30,7 +30,7 @@ spec:
   values:
     image:
       repository: "${ACR_LOGIN_SERVER}/devops-lab/lab1"
-      tag: "sha-560dfd01eab2cf27e1071181f25409353f881edd-42626785451-1"
+      tag: "sha-b9ddefb77e544cc435bd35e37074f5a395ceab8f-42627711429-1"
     ingress:
       enabled: true
       className: traefik
