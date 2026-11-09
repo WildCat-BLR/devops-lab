@@ -76,6 +76,16 @@ resource "azurerm_kubernetes_flux_configuration" "flux" {
     }
   }
 
+  kustomizations {
+    name                       = "certificates"
+    path                       = "./clusters/lab/certificates"
+    depends_on                 = ["lab"]
+    sync_interval_in_seconds   = 60
+    timeout_in_seconds         = 600
+    garbage_collection_enabled = true
+    wait                       = true
+  }
+
   depends_on = [
     azurerm_kubernetes_cluster_extension.flux
   ]

@@ -8,6 +8,8 @@ spec:
   dependsOn:
     - name: traefik
       namespace: flux
+    - name: cert-manager
+      namespace: flux
   interval: 1m
   timeout: 5m
   releaseName: lab1
@@ -33,3 +35,6 @@ spec:
       enabled: true
       className: traefik
       host: "${INGRESS_HOSTNAME}"
+      clusterIssuer: letsencrypt-production
+      tls:
+        secretName: lab1-tls

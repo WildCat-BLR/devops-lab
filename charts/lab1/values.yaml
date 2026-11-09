@@ -26,3 +26,6 @@ ingress:
   enabled: false
   className: traefik
   host: ""
+  clusterIssuer: ""
+  tls:
+    secretName: ""

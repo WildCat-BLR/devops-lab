@@ -334,6 +334,36 @@ devops-performance-lab/
 
 ## 7. Приложения и нагрузки
 
+### Публичный HTTPS: Traefik и cert-manager
+
+- [Корневая Kustomization](clusters/lab/kustomization.yaml) подключает HelmRelease Traefik, cert-manager и приложения. HelmRelease находятся в `flux`; workloads cert-manager устанавливаются в `cert-manager`.
+- [cert-manager](clusters/lab/cert-manager.yaml) устанавливается из OCI chart с CRD. `flux/flux-applier` должен иметь права на CRD, ClusterRole/ClusterRoleBinding и admission webhook configurations. `crds.keep: true` сохраняет CRD при удалении Helm-релиза; удаление всего AKS по-прежнему удаляет их.
+- [Terraform Flux configuration](terraform/main.tf) создаёт второй этап `certificates` с зависимостью от `lab`, где `wait = true` ожидает готовности HelmRelease. Этап применяет [ClusterIssuer](clusters/lab/certificates/cluster-issuers.yaml) только после установки cert-manager и его webhook. Каталог `certificates` намеренно не включён в корневой список `resources`.
+- HelmRelease приложения зависит от cert-manager и Traefik, но не от этапа `certificates`: до появления issuer Certificate может временно сообщать `IssuerNotFound`. Это не мешает готовности Deployment/HelmRelease и не создаёт циклическую зависимость этапов.
+- [Ingress chart](charts/lab1/templates/ingress.yaml) использует `ingress.clusterIssuer` и `ingress.tls.secretName`. Пустые значения сохраняют прежний режим с default certificate Traefik. При заданном issuer имя Secret обязательно.
+- Ingress-shim cert-manager создаёт Certificate и TLS Secret в `lab-app`. Traefik читает Secret и подхватывает продления без изменения Helm-релиза. ACME account keys и TLS private keys создаются в кластере, не в Git.
+
+**Применение:** после публикации изменений в отслеживаемую ветку выполнить обычный `terraform plan` / `terraform apply`, чтобы зарегистрировать второй этап Flux. При изменении `terraform/` в `main` это уже делает существующий workflow `Terraform Apply`; не запускать параллельно ручной apply. Уже работающий Flux может начать установку cert-manager до Terraform apply, но ClusterIssuer появятся только после регистрации этапа `certificates`. При первом развёртывании инфраструктуры GitOps-манифесты должны быть доступны в Git до запуска Terraform.
+
+**Автоматический выпуск production:** в [HelmRelease приложения](clusters/lab/helm-release.yaml) сразу выбран `letsencrypt-production` и Secret `lab1-tls`. После reconciliation cert-manager автоматически запрашивает доверенный сертификат и продлевает его; ручное переключение со staging не требуется. Публичный DNS должен указывать на IP Traefik, а порт 80 оставаться доступным из интернета: cert-manager создаёт отдельный временный HTTP Ingress с классом `traefik` для HTTP-01. Ingress приложения остаётся HTTPS-only. Не включать встроенный ACME Traefik.
+
+Во время первоначального выпуска Traefik может временно отдавать свой default certificate. Готовность HelmRelease не означает, что сертификат уже выпущен. Для диагностики и подтверждения результата:
+
+```powershell
+kubectl get kustomizations -n flux
+kubectl get helmreleases -n flux
+kubectl get pods -n cert-manager
+kubectl get clusterissuers
+kubectl get certificates -n lab-app
+kubectl describe certificate lab1-tls -n lab-app
+kubectl get certificaterequests,orders,challenges -n lab-app
+curl.exe -v https://kforgelab.eastus.cloudapp.azure.com/
+```
+
+Критерии успешного выпуска: `Ready=True` у Certificate `lab1-tls` с `issuerRef.name = letsencrypt-production`, Secret `lab1-tls` указан в живом Ingress, а HTTPS возвращает ответ приложения **без `-k`**. Staging issuer остаётся доступен для отдельных экспериментов, но приложение его не использует.
+
+При ошибке выпуска смотреть `kubectl describe certificate`, затем соответствующие CertificateRequest, Order и Challenge, а также `kubectl logs -n cert-manager deployment/cert-manager --since=10m`. Не удалять ACME account keys и не пересоздавать запросы многократно: у Let's Encrypt есть rate limits.
+
 ### Hello World v1
 
 - `nginx/nginx-unprivileged:alpine` с минимальной HTML страницей и явным `USER 101:101` (пользователь `nginx`). Образ настроен для работы без root: PID и временные файлы находятся в `/tmp`.
