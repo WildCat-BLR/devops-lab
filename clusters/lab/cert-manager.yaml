@@ -43,3 +43,21 @@ spec:
       keep: true
 
     replicaCount: 1
+
+    webhook:
+      validatingWebhookConfiguration:
+        namespaceSelector:
+          matchExpressions:
+            - key: cert-manager.io/disable-validation
+              operator: NotIn
+              values:
+                - "true"
+            # Match the exclusions enforced by AKS admissionsenforcer.
+            - key: control-plane
+              operator: NotIn
+              values:
+                - "true"
+            - key: kubernetes.azure.com/managedby
+              operator: NotIn
+              values:
+                - aks
