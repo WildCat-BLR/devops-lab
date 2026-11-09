@@ -1,0 +1,213 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: prometheus-community
+  namespace: flux
+spec:
+  interval: 1h
+  url: https://prometheus-community.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: monitoring
+  namespace: flux
+spec:
+  dependsOn:
+    - name: traefik
+      namespace: flux
+    - name: cert-manager
+      namespace: flux
+  interval: 10m
+  timeout: 10m
+  releaseName: monitoring
+  targetNamespace: monitoring
+  serviceAccountName: flux-applier
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: "93.1.1"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: flux
+      interval: 1h
+  install:
+    createNamespace: true
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  driftDetection:
+    mode: enabled
+  values:
+    fullnameOverride: monitoring
+
+    alertmanager:
+      enabled: false
+
+    kubeEtcd:
+      enabled: false
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeProxy:
+      enabled: false
+
+    defaultRules:
+      rules:
+        alertmanager: false
+        etcd: false
+        kubeControllerManager: false
+        kubeProxy: false
+        kubeSchedulerAlerting: false
+        kubeSchedulerRecording: false
+
+    prometheusOperator:
+      admissionWebhooks:
+        enabled: false
+      tls:
+        enabled: false
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 192Mi
+      prometheusConfigReloader:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+
+    prometheus:
+      ingress:
+        enabled: false
+      service:
+        type: ClusterIP
+      prometheusSpec:
+        replicas: 1
+        scrapeInterval: 30s
+        evaluationInterval: 30s
+        retention: 6h
+        retentionSize: 512MiB
+        walCompression: true
+        storageSpec:
+          emptyDir:
+            sizeLimit: 2Gi
+        resources:
+          requests:
+            cpu: 200m
+            memory: 384Mi
+            ephemeral-storage: 256Mi
+          limits:
+            cpu: 500m
+            memory: 768Mi
+            ephemeral-storage: 3Gi
+
+    kube-state-metrics:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+
+    prometheus-node-exporter:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+
+    grafana:
+      fullnameOverride: grafana
+      replicas: 1
+      adminUser: admin
+      persistence:
+        enabled: false
+      defaultDashboardsTimezone: browser
+      defaultDashboardsEditable: false
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+          ephemeral-storage: 64Mi
+        limits:
+          cpu: 500m
+          memory: 384Mi
+          ephemeral-storage: 512Mi
+      service:
+        type: ClusterIP
+      ingress:
+        enabled: true
+        ingressClassName: traefik
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-production
+          traefik.ingress.kubernetes.io/router.entrypoints: websecure
+          traefik.ingress.kubernetes.io/router.tls: "true"
+        hosts:
+          - "${INGRESS_HOSTNAME}"
+        path: /grafana
+        pathType: Prefix
+        tls:
+          - secretName: grafana-tls
+            hosts:
+              - "${INGRESS_HOSTNAME}"
+      grafana.ini:
+        server:
+          domain: "${INGRESS_HOSTNAME}"
+          root_url: "https://${INGRESS_HOSTNAME}/grafana/"
+          serve_from_sub_path: true
+        auth:
+          disable_login_form: false
+        auth.anonymous:
+          enabled: false
+        users:
+          allow_sign_up: false
+        security:
+          cookie_secure: true
+          cookie_samesite: lax
+        analytics:
+          reporting_enabled: false
+          check_for_updates: false
+      serviceAccount:
+        automountServiceAccountToken: true
+      rbac:
+        namespaced: true
+        useExistingRole: grafana-configmaps
+      extraObjects:
+        - apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: grafana-configmaps
+            namespace: monitoring
+          rules:
+            - apiGroups: [""]
+              resources: ["configmaps"]
+              verbs: ["get", "list", "watch"]
+      sidecar:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        dashboards:
+          searchNamespace: monitoring
+          resource: configmap
+          sizeLimit: 16Mi
+        datasources:
+          searchNamespace: monitoring
+          resource: configmap
+          sizeLimit: 4Mi
+          alertmanager:
+            enabled: false

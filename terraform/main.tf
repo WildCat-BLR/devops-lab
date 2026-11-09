@@ -86,6 +86,22 @@ resource "azurerm_kubernetes_flux_configuration" "flux" {
     wait                       = true
   }
 
+  kustomizations {
+    name                       = "monitoring"
+    path                       = "./clusters/lab/monitoring"
+    depends_on                 = ["certificates"]
+    sync_interval_in_seconds   = 60
+    timeout_in_seconds         = 900
+    garbage_collection_enabled = true
+    wait                       = true
+
+    post_build {
+      substitute = {
+        INGRESS_HOSTNAME = azurerm_public_ip.ingress.fqdn
+      }
+    }
+  }
+
   depends_on = [
     azurerm_kubernetes_cluster_extension.flux
   ]

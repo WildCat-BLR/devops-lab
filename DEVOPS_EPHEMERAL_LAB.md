@@ -84,7 +84,7 @@ flowchart TD
 - Стартовый режим: **AKS + минимально допустимый system node pool**, размер VM от **4 vCPU и 4 GiB RAM на узел**; B-series не подходят для system pool.
 - Минимальная реализованная конфигурация: **2 system node** в **East US**, x86_64 `Standard_D4als_v6` (4 vCPU / 8 GiB каждый), AKS Free tier. По текущим требованиям Microsoft system pool содержит минимум два узла; Spot и B-series для него не поддерживаются.
 - Не создавать отдельный user pool, Ingress LoadBalancer, NAT Gateway, Azure Firewall или Application Gateway на первых этапах.
-- **Не открывать Grafana наружу**: пользоваться `kubectl port-forward`.
+- Для текущей lab Grafana открыта только по HTTPS на `/grafana/` с обязательным входом. Prometheus и exporters не публикуются наружу; Prometheus UI доступен через `kubectl port-forward`.
 - Для тестов HPA сначала масштабировать **Pod'ы**, а не Node.
 - Не включать Cluster Autoscaler до продвинутого этапа.
 - Не считать $50 точным верхним пределом: Azure Budget **предупреждает**, но не останавливает биллинг автоматически.
@@ -397,12 +397,82 @@ curl.exe -v https://kforgelab.eastus.cloudapp.azure.com/
 
 ## 8. Prometheus / Grafana
 
-Минимальный набор observability:
+### Установка через Flux
 
-- `kube-state-metrics` (объекты/состояние Kubernetes).
-- Node exporter / container metrics с учётом возможностей AKS и установки Prometheus.
-- Prometheus с **коротким retention** и маленьким диском; при нехватке памяти — урезанная конфигурация вместо полного `kube-prometheus-stack`.
-- Grafana с временным доступом через port-forward; dashboards в Git, не хранить важные результаты только в удаляемой Grafana.
+[HelmRelease monitoring](clusters/lab/monitoring/helm-release.yaml) устанавливает закреплённый `kube-prometheus-stack` в namespace `monitoring`. [Terraform](terraform/main.tf) регистрирует отдельную Kustomization:
+
+```text
+lab (Traefik, cert-manager, приложение)
+  -> certificates (ClusterIssuer)
+    -> monitoring (Prometheus Operator, Prometheus, Grafana, exporters)
+```
+
+Каталог `monitoring` намеренно не включён в корневой `clusters/lab/kustomization.yaml`: иначе один HelmRelease будет применяться двумя этапами, а мониторинг может заблокировать подготовку issuer. `INGRESS_HOSTNAME` передаётся в новый этап через `post_build`. После публикации изменений в `main` существующий `Terraform Apply` workflow регистрирует этап; не запускать параллельный ручной apply.
+
+Включены Prometheus Operator, Prometheus, Grafana, kube-state-metrics, node-exporter и стандартные dashboards/recording rules из chart. Kubelet/cAdvisor предоставляет CPU/memory контейнеров, kube-state-metrics — requests/limits, состояния Pod и HPA. Приложение с обычным nginx не начинает экспортировать HTTP RPS/latency автоматически: для этого нужны отдельные метрики ingress/app или результаты k6.
+
+Для небольшой lab отключены Alertmanager и сбор недоступных стандартным способом метрик AKS etcd, scheduler, controller-manager и kube-proxy. Дополнительный admission webhook Prometheus Operator выключен: это уменьшает число hooks/сертификатов и исключает ещё один конфликт с AKS admissionsenforcer. Вместе с ним выключен внутренний TLS HTTP-сервера Operator, иначе chart ожидает Secret от отключённого webhook. Это не меняет публичный HTTPS Grafana. Проверять корректность собственных PrometheusRule всё равно необходимо; этот режим не является production-hardening.
+
+### Хранение и ресурсы
+
+- **Нет PVC, Azure Disk/Files/Blob и новых CSI-драйверов.** Prometheus использует disk-backed `emptyDir` до `2Gi`, retention `6h` и `512MiB` для TSDB blocks. WAL/head занимают дополнительное место; retention не является жёстким ограничителем всего каталога.
+- Grafana хранит SQLite и локальное состояние в `emptyDir`. Это не RAM-диск: используется временное место на узле. Установлены requests/limits CPU, memory и ограничения ephemeral-storage основных хранилищ.
+- При пересоздании Pod Prometheus теряется история метрик; при пересоздании Pod Grafana теряются созданные через UI пользователи, настройки и несохранённые в Git dashboards. Обычный рестарт контейнера внутри того же Pod обычно сохраняет `emptyDir`.
+- Datasource Prometheus и стандартные dashboards автоматически восстанавливаются из ConfigMaps, генерируемых закреплённым chart. Собственные dashboards следует добавлять в Git, а важные результаты экспериментов выгружать до destroy, например в GitHub Actions artifacts или отдельный Blob container. Автоматический экспорт пока не реализован.
+- Стек добавляет примерно **5 Pod для одного Linux-узла** (node-exporter — один Pod на узел), около **430m CPU / 736Mi RAM requests**, включая Prometheus config-reloader. Это не гарантия фактического потребления. Текущий Terraform задаёт один `Standard_B2s`, `max_pods = 30`, без autoscaling; проверять свободные allocatable resources и число Pod до применения. При `Pending`/`OOMKilled` смотреть события и измерения, а не бесконечно повторять установку. Размер узла этим изменением не увеличивается.
+
+### Публичный доступ и вход
+
+Grafana: **`https://kforgelab.eastus.cloudapp.azure.com/grafana/`** (фактический hostname берётся из Terraform). Настроены `root_url` и `serve_from_sub_path`; Traefik передаёт префикс без StripPrefix. Более длинный путь `/grafana` имеет приоритет над маршрутом приложения `/`. Новый публичный IP и DNS-запись не нужны.
+
+Ingress Grafana запрашивает production-сертификат в Secret `monitoring/grafana-tls`. Он отдельный от `lab-app/lab1-tls`, поскольку Ingress не может ссылаться на TLS Secret другого namespace. Частое полное пересоздание lab повторно запрашивает сертификаты для того же hostname и может упереться в Let's Encrypt rate limits; не использовать production issuance для бесконечных тестовых циклов.
+
+Anonymous access и самостоятельная регистрация отключены, secure cookies включены. Начальный логин — `admin`; chart генерирует случайный пароль, который не хранится в Git. Получать его только локально и не публиковать в чате/CI logs:
+
+```powershell
+$encoded = kubectl get secret grafana -n monitoring -o jsonpath='{.data.admin-password}'
+[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($encoded))
+Remove-Variable encoded
+```
+
+Пароль из Secret используется для инициализации новой SQLite. Если поменять пароль в UI, Secret автоматически не обновится; после потери SQLite при пересоздании Pod снова используется пароль из Secret. При полном пересоздании релиза/кластера пароль может измениться.
+
+Grafana sidecars ищут dashboards/datasources только в ConfigMaps namespace `monitoring`. Их Role разрешает лишь `get/list/watch configmaps`; чтение Secrets и кластерная роль Grafana не выдаются. Значения admin credentials подставляет kubelet через Secret references, а не API-доступ Grafana. Prometheus/Operator сохраняют необходимые собственные права на discovery и управление ресурсами.
+
+Prometheus и exporters имеют только ClusterIP Services, без публичных Ingress. Это не изоляция от остальных Pod: NetworkPolicy для monitoring пока не добавлена. Публичный URL Grafana защищён её login, не SSO/IP allowlist. Для production предпочтителен отдельный hostname, чтобы приложение и Grafana не делили browser origin, и централизованная аутентификация.
+
+### Проверка и диагностика
+
+```powershell
+kubectl get kustomizations -n flux
+kubectl describe helmrelease monitoring -n flux
+kubectl get pods,svc,ingress,pvc -n monitoring
+kubectl get prometheus,servicemonitors -n monitoring
+kubectl get certificates -n monitoring
+kubectl describe certificate grafana-tls -n monitoring
+curl.exe -I https://kforgelab.eastus.cloudapp.azure.com/grafana/
+```
+
+Ожидаем `Ready=True` у HelmRelease и Certificate, готовые monitoring Pod, отсутствие PVC и редирект на `/grafana/login` без TLS-ошибки. До выпуска сертификата возможно временное предупреждение TLS. Проверка без логина `https://kforgelab.eastus.cloudapp.azure.com/grafana/api/search` должна отказать в доступе, а не возвращать dashboards.
+
+Для Prometheus UI, не публикуя его наружу:
+
+```powershell
+kubectl port-forward -n monitoring svc/monitoring-prometheus 9090:9090
+```
+
+Открыть `http://localhost:9090/targets`: проверить targets kubelet, kube-state-metrics и node-exporter. В Grafana выбрать datasource `Prometheus` и dashboards `Kubernetes / Compute Resources / Namespace (Pods)` или `Kubernetes / Compute Resources / Pod`, namespace `lab-app`.
+
+Если установка не завершилась:
+
+```powershell
+kubectl get events -n monitoring --sort-by=.metadata.creationTimestamp
+kubectl describe pods -n monitoring
+kubectl logs -n monitoring deployment/monitoring-operator --since=10m
+kubectl logs -n monitoring deployment/grafana -c grafana --since=10m
+```
+
+`flux-applier` должен иметь права устанавливать monitoring CRD и cluster RBAC. Отдельных CI-проверок Grafana/Prometheus нет; после применения проверять readiness, HTTPS, авторизацию Grafana и targets Prometheus в AKS.
 
 ### Что вывести на Dashboard
 
